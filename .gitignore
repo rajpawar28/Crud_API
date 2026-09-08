@@ -1,10 +1,23 @@
+# Virtual environment
 .venv/
 venv/
 .env
+
+# SQLite Databases
+tasks.db
+*.db
+*.sqlite
+*.sqlite3
+
+# Python bytecode & cache
 __pycache__/
 *.py[cod]
 *$py.class
+
+# Test caches & coverage
 .pytest_cache/
 .coverage
 htmlcov/
+
+# OS specific
 .DS_Store
