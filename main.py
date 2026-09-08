@@ -3,11 +3,11 @@
 A clean, beginner-friendly REST CRUD API built with FastAPI and in-memory storage.
 """
 
-from typing import Any, Dict, List
-from fastapi import FastAPI, HTTPException, Request, status
+from typing import Any, Dict, List, Optional
+from fastapi import FastAPI, HTTPException, Request, Response, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 app = FastAPI(
@@ -64,7 +64,37 @@ class TaskCreate(BaseModel):
             "example": {
                 "title": "Buy milk"
             }
-        }
+        },
+    }
+
+
+class TaskUpdate(BaseModel):
+    title: Optional[str] = Field(default=None, description="Updated title of the task")
+    done: Optional[bool] = Field(default=None, description="Updated completion status")
+
+    @field_validator("title", mode="before")
+    @classmethod
+    def validate_title(cls, v: Any) -> Optional[str]:
+        if v is not None:
+            if not isinstance(v, str) or not v.strip():
+                raise ValueError("Title cannot be empty")
+            return v.strip()
+        return v
+
+    @model_validator(mode="after")
+    def validate_non_empty(self) -> "TaskUpdate":
+        if self.title is None and self.done is None:
+            raise ValueError("Invalid request body: at least one field ('title' or 'done') must be provided")
+        return self
+
+    model_config = {
+        "extra": "forbid",
+        "json_schema_extra": {
+            "example": {
+                "title": "Buy groceries",
+                "done": True,
+            }
+        },
     }
 
 
@@ -88,8 +118,21 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
     for err in errors:
         loc = err.get("loc", ())
         msg = err.get("msg", "")
-        # Custom check for title validation errors
+
+        # Value error from Pydantic validator
+        ctx = err.get("ctx", {})
+        if "error" in ctx and isinstance(ctx["error"], Exception):
+            return JSONResponse(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                content={"error": str(ctx["error"])},
+            )
+
         if "title" in loc or "title" in msg.lower():
+            if request.method == "PUT":
+                return JSONResponse(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    content={"error": "Title cannot be empty"},
+                )
             return JSONResponse(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 content={"error": "Title is required and cannot be empty"},
@@ -99,6 +142,7 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
                 status_code=status.HTTP_400_BAD_REQUEST,
                 content={"error": "Invalid task ID"},
             )
+
     return JSONResponse(
         status_code=status.HTTP_400_BAD_REQUEST,
         content={"error": "Invalid request body"},
@@ -200,3 +244,53 @@ def create_task(task_in: TaskCreate):
     }
     tasks_db.append(new_task)
     return new_task
+
+
+@app.put(
+    "/tasks/{id}",
+    response_model=TaskResponse,
+    responses={
+        200: {"model": TaskResponse, "description": "Task updated successfully"},
+        400: {"model": ErrorResponse, "description": "Invalid request body"},
+        404: {"model": ErrorResponse, "description": "Task not found"},
+    },
+    summary="Update Task by ID",
+    description="Updates an existing task's title and/or done status. Returns 404 if the task is not found or 400 if the payload is invalid.",
+    tags=["Tasks"],
+)
+def update_task(id: int, task_in: TaskUpdate):
+    """Update an existing task in memory."""
+    for task in tasks_db:
+        if task["id"] == id:
+            if task_in.title is not None:
+                task["title"] = task_in.title
+            if task_in.done is not None:
+                task["done"] = task_in.done
+            return task
+    raise HTTPException(
+        status_code=status.HTTP_404_NOT_FOUND,
+        detail=f"Task {id} not found",
+    )
+
+
+@app.delete(
+    "/tasks/{id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    responses={
+        204: {"description": "Task deleted successfully (no content)"},
+        404: {"model": ErrorResponse, "description": "Task not found"},
+    },
+    summary="Delete Task by ID",
+    description="Deletes a task by its integer ID. Returns 204 No Content on success or 404 if not found.",
+    tags=["Tasks"],
+)
+def delete_task(id: int):
+    """Delete a task by ID."""
+    for idx, task in enumerate(tasks_db):
+        if task["id"] == id:
+            tasks_db.pop(idx)
+            return Response(status_code=status.HTTP_204_NO_CONTENT)
+    raise HTTPException(
+        status_code=status.HTTP_404_NOT_FOUND,
+        detail=f"Task {id} not found",
+    )
