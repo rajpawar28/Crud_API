@@ -1,18 +1,20 @@
 """Task API - Main Application Module.
 
 A clean, beginner-friendly REST CRUD API built with FastAPI, PostgreSQL, and Docker.
-Follows the FlyRank Week 3 Assignment A3 specification.
+Now with Supabase Authentication (A4: Auth · Login & Protect).
 """
 
 from contextlib import asynccontextmanager
 from typing import Any, Dict, List, Optional
-from fastapi import FastAPI, HTTPException, Request, Response, status
+from fastapi import Depends, FastAPI, HTTPException, Request, Response, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, field_validator, model_validator
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 import database
+from auth import get_current_user
+from supabase_client import supabase
 
 
 # --------------------------------------------------
@@ -37,15 +39,28 @@ TAGS_METADATA = [
         "name": "Tasks",
         "description": "CRUD operations for managing tasks stored in PostgreSQL.",
     },
+    {
+        "name": "Auth",
+        "description": "Authentication endpoints: signup, login, and logout via Supabase.",
+    },
+    {
+        "name": "Public",
+        "description": "Public endpoints accessible without authentication.",
+    },
+    {
+        "name": "Protected",
+        "description": "Protected endpoints requiring a valid Bearer token.",
+    },
 ]
 
 app = FastAPI(
     title="Task API",
     description=(
         "A clean, beginner-friendly REST CRUD API for managing tasks. "
-        "All data is persisted in a PostgreSQL database running in Docker."
+        "All data is persisted in a PostgreSQL database running in Docker. "
+        "Authentication is powered by Supabase Auth."
     ),
-    version="3.0",
+    version="4.0",
     openapi_tags=TAGS_METADATA,
     docs_url="/docs",
     redoc_url="/redoc",
@@ -66,7 +81,7 @@ class RootResponse(BaseModel):
     )
     version: str = Field(
         ...,
-        examples=["3.0"],
+        examples=["4.0"],
         description="API version",
     )
     endpoints: List[str] = Field(
@@ -182,6 +197,82 @@ class ErrorResponse(BaseModel):
 
 
 # --------------------------------------------------
+# Auth Request & Response Schemas (A4)
+# --------------------------------------------------
+class AuthRequest(BaseModel):
+    """Schema for signup and login requests."""
+
+    email: str = Field(
+        ...,
+        description="User email address",
+    )
+    password: str = Field(
+        ...,
+        description="User password (handled by Supabase, never stored locally)",
+    )
+
+    @field_validator("email", mode="before")
+    @classmethod
+    def validate_email(cls, v: Any) -> str:
+        if v is None or not isinstance(v, str) or not v.strip():
+            raise ValueError("Email is required")
+        return v.strip()
+
+    @field_validator("password", mode="before")
+    @classmethod
+    def validate_password(cls, v: Any) -> str:
+        if v is None or not isinstance(v, str) or not v.strip():
+            raise ValueError("Password is required")
+        return v.strip()
+
+    model_config = {
+        "extra": "forbid",
+        "json_schema_extra": {
+            "example": {
+                "email": "test@example.com",
+                "password": "password123",
+            }
+        },
+    }
+
+
+class SignupResponse(BaseModel):
+    """Schema for successful signup response."""
+
+    id: str = Field(..., description="User ID from Supabase")
+    email: str = Field(..., description="User email address")
+    created_at: str = Field(..., description="Account creation timestamp")
+
+
+class LoginResponse(BaseModel):
+    """Schema for successful login response."""
+
+    access_token: str = Field(..., description="JWT access token for protected routes")
+    refresh_token: str = Field(..., description="Refresh token for obtaining new access tokens")
+
+
+class ProfileResponse(BaseModel):
+    """Schema for authenticated user profile."""
+
+    id: str = Field(..., description="User ID from Supabase")
+    email: str = Field(..., description="User email address")
+    created_at: str = Field(..., description="Account creation timestamp")
+
+
+class DashboardResponse(BaseModel):
+    """Schema for authenticated dashboard response."""
+
+    message: str = Field(..., description="Welcome message")
+    user: Dict[str, str] = Field(..., description="Authenticated user info")
+
+
+class PublicInfoResponse(BaseModel):
+    """Schema for public info response."""
+
+    message: str = Field(..., description="Public welcome message")
+
+
+# --------------------------------------------------
 # Custom Exception Handlers
 # --------------------------------------------------
 @app.exception_handler(RequestValidationError)
@@ -231,7 +322,7 @@ async def http_exception_handler(request: Request, exc: StarletteHTTPException):
 
 
 # --------------------------------------------------
-# Endpoints
+# General Endpoints
 # --------------------------------------------------
 @app.get(
     "/",
@@ -245,7 +336,7 @@ def get_root():
     """Return API metadata."""
     return {
         "name": "Task API",
-        "version": "3.0",
+        "version": "4.0",
         "endpoints": ["/tasks"],
     }
 
@@ -263,6 +354,9 @@ def get_health():
     return {"status": "ok"}
 
 
+# --------------------------------------------------
+# Task CRUD Endpoints (unchanged from A3)
+# --------------------------------------------------
 @app.get(
     "/tasks",
     response_model=List[TaskResponse],
@@ -366,3 +460,180 @@ def delete_task(id: int):
             detail=f"Task {id} not found",
         )
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+# --------------------------------------------------
+# Auth Endpoints (A4)
+# --------------------------------------------------
+@app.post(
+    "/auth/signup",
+    response_model=SignupResponse,
+    status_code=status.HTTP_201_CREATED,
+    responses={
+        201: {"model": SignupResponse, "description": "User signed up successfully"},
+        400: {"model": ErrorResponse, "description": "Invalid or missing signup fields"},
+    },
+    summary="Sign Up",
+    description="Register a new user account via Supabase Auth. Returns user info on success.",
+    tags=["Auth"],
+)
+def auth_signup(body: AuthRequest):
+    """Create a new user account through Supabase."""
+    if supabase is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"error": "Supabase is not configured"},
+        )
+
+    try:
+        response = supabase.auth.sign_up(
+            {"email": body.email, "password": body.password}
+        )
+    except Exception as e:
+        error_msg = str(e)
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"error": error_msg},
+        )
+
+    if response.user is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"error": "Signup failed"},
+        )
+
+    return {
+        "id": str(response.user.id),
+        "email": response.user.email or "",
+        "created_at": str(response.user.created_at or ""),
+    }
+
+
+@app.post(
+    "/auth/login",
+    response_model=LoginResponse,
+    status_code=status.HTTP_200_OK,
+    responses={
+        200: {"model": LoginResponse, "description": "Login successful, tokens returned"},
+        400: {"model": ErrorResponse, "description": "Invalid or missing login fields"},
+        401: {"model": ErrorResponse, "description": "Invalid login credentials"},
+    },
+    summary="Log In",
+    description="Authenticate with email and password via Supabase Auth. Returns access and refresh tokens.",
+    tags=["Auth"],
+)
+def auth_login(body: AuthRequest):
+    """Authenticate a user through Supabase and return tokens."""
+    if supabase is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={"error": "Invalid login credentials"},
+        )
+
+    try:
+        response = supabase.auth.sign_in_with_password(
+            {"email": body.email, "password": body.password}
+        )
+    except Exception:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={"error": "Invalid login credentials"},
+        )
+
+    if response.session is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={"error": "Invalid login credentials"},
+        )
+
+    return {
+        "access_token": response.session.access_token,
+        "refresh_token": response.session.refresh_token,
+    }
+
+
+@app.post(
+    "/auth/logout",
+    status_code=status.HTTP_204_NO_CONTENT,
+    responses={
+        204: {"description": "User logged out successfully with empty response body"},
+        401: {"model": ErrorResponse, "description": "Missing or invalid authentication token"},
+    },
+    summary="Log Out",
+    description="Sign out the currently authenticated user via Supabase. Requires a valid Bearer token.",
+    tags=["Auth"],
+)
+def auth_logout(user=Depends(get_current_user)):
+    """Sign out the authenticated user through Supabase."""
+    if supabase is not None:
+        try:
+            supabase.auth.sign_out()
+        except Exception:
+            pass  # Best-effort logout
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+# --------------------------------------------------
+# Public Endpoints (A4)
+# --------------------------------------------------
+@app.get(
+    "/public/info",
+    response_model=PublicInfoResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Public Info",
+    description="Returns a public welcome message. No authentication required.",
+    tags=["Public"],
+)
+def get_public_info():
+    """Return a public welcome message."""
+    return {"message": "Welcome stranger! This info is public."}
+
+
+# --------------------------------------------------
+# Protected Endpoints (A4)
+# --------------------------------------------------
+@app.get(
+    "/protected/profile",
+    response_model=ProfileResponse,
+    status_code=status.HTTP_200_OK,
+    responses={
+        200: {"model": ProfileResponse, "description": "Authenticated user profile"},
+        401: {"model": ErrorResponse, "description": "Missing or invalid authentication token"},
+    },
+    summary="User Profile",
+    description="Returns the authenticated user's profile. Requires a valid Bearer token.",
+    tags=["Protected"],
+)
+def get_profile(user=Depends(get_current_user)):
+    """Return the authenticated user's safe profile information."""
+    return {
+        "id": str(user.id),
+        "email": user.email or "",
+        "created_at": str(user.created_at or ""),
+    }
+
+
+@app.get(
+    "/protected/dashboard",
+    response_model=DashboardResponse,
+    status_code=status.HTTP_200_OK,
+    responses={
+        200: {"model": DashboardResponse, "description": "Authenticated dashboard"},
+        401: {"model": ErrorResponse, "description": "Missing or invalid authentication token"},
+    },
+    summary="Dashboard",
+    description=(
+        "Returns a personalized dashboard for the authenticated user. "
+        "Demonstrates the reusable auth dependency. Requires a valid Bearer token."
+    ),
+    tags=["Protected"],
+)
+def get_dashboard(user=Depends(get_current_user)):
+    """Return a personalized dashboard for the authenticated user."""
+    return {
+        "message": "Welcome to your dashboard",
+        "user": {
+            "id": str(user.id),
+            "email": user.email or "",
+        },
+    }
