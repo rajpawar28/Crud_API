@@ -5,8 +5,9 @@ A clean, beginner-friendly REST CRUD API built with FastAPI and in-memory storag
 
 from typing import Any, Dict, List
 from fastapi import FastAPI, HTTPException, Request, status
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 app = FastAPI(
@@ -47,6 +48,26 @@ class HealthResponse(BaseModel):
     status: str = Field(..., example="ok")
 
 
+class TaskCreate(BaseModel):
+    title: str = Field(..., description="The title of the task (cannot be empty or whitespace)")
+
+    @field_validator("title", mode="before")
+    @classmethod
+    def validate_title(cls, v: Any) -> str:
+        if v is None or not isinstance(v, str) or not v.strip():
+            raise ValueError("Title is required and cannot be empty")
+        return v.strip()
+
+    model_config = {
+        "extra": "forbid",
+        "json_schema_extra": {
+            "example": {
+                "title": "Buy milk"
+            }
+        }
+    }
+
+
 class TaskResponse(BaseModel):
     id: int = Field(..., example=1, description="Unique identifier for the task")
     title: str = Field(..., example="Learn FastAPI", description="Title of the task")
@@ -60,6 +81,30 @@ class ErrorResponse(BaseModel):
 # --------------------------------------------------
 # Exception Handlers
 # --------------------------------------------------
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    """Convert FastAPI validation errors from 422 to 400 Bad Request with custom JSON message."""
+    errors = exc.errors()
+    for err in errors:
+        loc = err.get("loc", ())
+        msg = err.get("msg", "")
+        # Custom check for title validation errors
+        if "title" in loc or "title" in msg.lower():
+            return JSONResponse(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                content={"error": "Title is required and cannot be empty"},
+            )
+        if "id" in loc:
+            return JSONResponse(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                content={"error": "Invalid task ID"},
+            )
+    return JSONResponse(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        content={"error": "Invalid request body"},
+    )
+
+
 @app.exception_handler(StarletteHTTPException)
 async def http_exception_handler(request: Request, exc: StarletteHTTPException):
     """Ensure all HTTP exceptions return structured JSON errors."""
@@ -131,3 +176,27 @@ def get_task(id: int):
         status_code=status.HTTP_404_NOT_FOUND,
         detail=f"Task {id} not found",
     )
+
+
+@app.post(
+    "/tasks",
+    response_model=TaskResponse,
+    status_code=status.HTTP_201_CREATED,
+    responses={
+        201: {"model": TaskResponse, "description": "Task created successfully"},
+        400: {"model": ErrorResponse, "description": "Invalid request body"},
+    },
+    summary="Create New Task",
+    description="Creates a new task with the given title. Automatically assigns the next available ID and sets done to false.",
+    tags=["Tasks"],
+)
+def create_task(task_in: TaskCreate):
+    """Create a new task in memory."""
+    next_id = max([t["id"] for t in tasks_db], default=0) + 1
+    new_task = {
+        "id": next_id,
+        "title": task_in.title,
+        "done": False,
+    }
+    tasks_db.append(new_task)
+    return new_task
