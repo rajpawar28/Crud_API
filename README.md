@@ -1,36 +1,34 @@
-# Task API - REST CRUD API
+# Task API - REST CRUD API with SQLite Database
 
-A clean, beginner-friendly REST CRUD API built with Python and FastAPI for the FlyRank Internship Backend Track (Week 2 - Assignment A1).
+A clean, beginner-friendly REST CRUD API built with Python, FastAPI, and SQLite for the FlyRank Internship Backend Track (Week 3 - Assignment A2: *"Connecting your CRUD to the database"*).
 
 ---
 
 ## 📌 Description
 
-This project implements a complete in-memory Task Management REST API. It supports standard CRUD operations (`GET`, `POST`, `PUT`, `DELETE`), robust input validation, meaningful error handling, and interactive API documentation powered by OpenAPI and Swagger UI.
+This project builds upon Week 2's Assignment A1 by migrating the storage layer from an ephemeral in-memory list to a persistent **SQLite database (`tasks.db`)**.
 
-> ⚠️ **Important Note on Data Storage**:
-> All task data is stored strictly **in-memory**. There is no database or file persistence. When the server restarts, all data resets back to the initial 3 example tasks.
+The API contract (endpoints, request/response formats, validation rules, error handling, status codes, and Swagger UI) remains 100% identical to A1, but all task data is now safely stored on disk in SQLite and survives server restarts.
 
 ---
 
-## 🚀 Features
+## 🆕 What's New in Week 3 (Assignment A2)
 
-- **Full CRUD Operations**:
-  - `GET /`: Retrieve API metadata and resource endpoints.
-  - `GET /health`: Health check endpoint.
-  - `GET /tasks`: Retrieve the list of all tasks.
-  - `GET /tasks/{id}`: Retrieve a single task by ID.
-  - `POST /tasks`: Create a new task with automatic collision-free ID assignment.
-  - `PUT /tasks/{id}`: Update an existing task's title and/or completion status.
-  - `DELETE /tasks/{id}`: Delete a task by ID returning `204 No Content` with an empty body.
-- **Strict Input Validation**:
-  - Automatically rejects missing, empty, or whitespace-only task titles.
-  - Disallows client-supplied `id` or `done` values on task creation.
-  - Formats all validation and client errors as `400 Bad Request` with descriptive JSON messages (`{"error": "..."}`).
-- **Proper HTTP Status Codes**: Returns `200`, `201`, `204`, `400`, and `404` accurately.
-- **Interactive Swagger Documentation**: Built-in interactive UI at `/docs`.
-- **Zero Database / Zero File Persist Overhead**: Lightweight and instant setup.
-- **Comprehensive Automated Test Suite**: 100% test coverage for all endpoints and error cases.
+- **SQLite Database Persistence**: All task operations now read and write directly to a local SQLite database (`tasks.db`).
+- **Automatic Initialization & Seeding**: `tasks.db` and the `tasks` table are automatically created on startup. Seed data (3 initial example tasks) is only inserted if the table is empty (`COUNT(*) == 0`), preventing data duplication upon server restarts.
+- **100% Parameterized SQL**: All user inputs in `SELECT`, `INSERT`, `UPDATE`, and `DELETE` queries strictly use parameter placeholders (`?`) to prevent SQL injection vulnerabilities.
+- **Database Explorer Compatibility**: The generated `tasks.db` is standard SQLite and can be opened directly with tools like [DB Browser for SQLite](https://sqlitebrowser.org/).
+- **Isolated Automated Test Suite**: Automated tests execute against isolated temporary SQLite instances, ensuring zero test data corruption on the main development database.
+
+---
+
+## 💡 Why SQLite?
+
+1. **Zero Setup Overhead**: SQLite requires no separate server processes, user management, or network configuration.
+2. **Built Into Python**: Uses Python's standard library `sqlite3` without third-party database drivers.
+3. **Single File Portability**: The entire database lives in a single local file (`tasks.db`).
+4. **Data Persistence**: Data created in one session remains safely stored on disk and persists across restarts.
+5. **Beginner Friendly & Production Lightweight**: Provides ACID-compliant transactions and standard SQL syntax while remaining lightweight.
 
 ---
 
@@ -39,8 +37,42 @@ This project implements a complete in-memory Task Management REST API. It suppor
 - **Language**: Python 3.10+
 - **Framework**: [FastAPI](https://fastapi.tiangolo.com/)
 - **ASGI Server**: [Uvicorn](https://www.uvicorn.org/)
+- **Database**: [SQLite](https://www.sqlite.org/) (Python built-in `sqlite3`)
 - **Data Validation**: [Pydantic v2](https://docs.pydantic.dev/)
 - **Testing**: [pytest](https://docs.pytest.org/) & [HTTPX](https://www.python-httpx.org/)
+
+---
+
+## 🗄️ Database Schema & Storage
+
+The application creates and connects to `tasks.db` located in the project root directory.
+
+### Table: `tasks`
+
+```sql
+CREATE TABLE IF NOT EXISTS tasks (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    title TEXT NOT NULL,
+    done BOOLEAN NOT NULL DEFAULT 0
+);
+```
+
+| Column | Type | Constraints | Description |
+|---|---|---|---|
+| `id` | `INTEGER` | `PRIMARY KEY AUTOINCREMENT` | Unique auto-generated task ID |
+| `title` | `TEXT` | `NOT NULL` | Task title string (cannot be empty) |
+| `done` | `BOOLEAN` | `NOT NULL DEFAULT 0` | Completion status (stored as `0` or `1`, returned as boolean) |
+
+### Automatic Seeding & Restart Behavior
+
+When the database is initialized, the application checks `SELECT COUNT(*) FROM tasks;`:
+- If `count == 0`, it inserts the 3 initial example tasks:
+  1. `{"id": 1, "title": "Learn FastAPI", "done": false}`
+  2. `{"id": 2, "title": "Build CRUD API", "done": false}`
+  3. `{"id": 3, "title": "Test API with Swagger", "done": true}`
+- If `count > 0`, it skips seeding, guaranteeing that existing tasks and newly created tasks are never overwritten or duplicated across server restarts.
+
+> ℹ️ **Note on Version Control**: `tasks.db` is added to `.gitignore` so every developer or clone starts with a clean, freshly generated database.
 
 ---
 
@@ -48,13 +80,14 @@ This project implements a complete in-memory Task Management REST API. It suppor
 
 ```text
 task-api/
-├── main.py              # FastAPI application, route handlers, models, and error handlers
-├── requirements.txt     # Minimal, strictly necessary dependencies
-├── README.md            # Complete project documentation and guide
-├── .gitignore           # Git ignore patterns for Python, venv, and test caches
+├── main.py              # FastAPI application, route handlers, models, and exception handlers
+├── database.py          # SQLite connection manager, schema initialization, and seeding
+├── requirements.txt     # Minimal dependencies (fastapi, uvicorn, pytest, httpx)
+├── README.md            # Comprehensive project documentation and guides
+├── .gitignore           # Ignores tasks.db, .venv, __pycache__, and test caches
 └── tests/
     ├── __init__.py      # Test package initialization
-    └── test_api.py      # Automated pytest suite covering all CRUD endpoints and errors
+    └── test_api.py      # Automated pytest suite covering SQLite CRUD, isolation, and persistence
 ```
 
 ---
@@ -63,8 +96,8 @@ task-api/
 
 ### 1. Clone the repository and navigate into the project directory
 ```bash
-git clone <repository-url>
-cd task-api
+git clone https://github.com/rajpawar28/Crud_API.git
+cd Crud_API
 ```
 
 ### 2. Create and activate a Python virtual environment (Python 3.10+)
@@ -73,7 +106,7 @@ cd task-api
 python3 -m venv .venv
 source .venv/bin/activate
 
-# Windows (Command Prompt / PowerShell)
+# Windows
 python -m venv .venv
 .venv\Scripts\activate
 ```
@@ -87,14 +120,14 @@ pip install -r requirements.txt
 
 ## ▶️ Running the Server
 
-Start the local development server with live reload:
+Start the FastAPI application with Uvicorn:
 
 ```bash
 uvicorn main:app --reload
 ```
 
-Once running, the server is available at:
-- **Base API URL**: [http://localhost:8000](http://localhost:8000)
+Once running, access:
+- **Base API**: [http://localhost:8000](http://localhost:8000)
 - **Interactive Swagger UI**: [http://localhost:8000/docs](http://localhost:8000/docs)
 - **ReDoc Documentation**: [http://localhost:8000/redoc](http://localhost:8000/redoc)
 
@@ -106,46 +139,11 @@ Once running, the server is available at:
 |---|---|---|---|---|
 | `GET` | `/` | API metadata & root information | `200 OK` | - |
 | `GET` | `/health` | API health check | `200 OK` | - |
-| `GET` | `/tasks` | List all tasks | `200 OK` | - |
+| `GET` | `/tasks` | List all tasks from SQLite | `200 OK` | - |
 | `GET` | `/tasks/{id}` | Get single task by integer ID | `200 OK` | `404 Not Found` |
-| `POST` | `/tasks` | Create a new task | `201 Created` | `400 Bad Request` |
+| `POST` | `/tasks` | Create a new task in SQLite | `201 Created` | `400 Bad Request` |
 | `PUT` | `/tasks/{id}` | Update task title and/or status | `200 OK` | `400 Bad Request`, `404 Not Found` |
 | `DELETE` | `/tasks/{id}` | Delete task by integer ID | `204 No Content` (empty body) | `404 Not Found` |
-
----
-
-## 📋 Initial Example Data
-
-The in-memory database initializes with exactly 3 example tasks:
-
-```json
-[
-  {
-    "id": 1,
-    "title": "Learn FastAPI",
-    "done": false
-  },
-  {
-    "id": 2,
-    "title": "Build CRUD API",
-    "done": false
-  },
-  {
-    "id": 3,
-    "title": "Test API with Swagger",
-    "done": true
-  }
-]
-```
-
----
-
-## 🔍 Interactive Swagger UI
-
-Open [http://localhost:8000/docs](http://localhost:8000/docs) in your browser.
-
-- You can view all schemas (`TaskCreate`, `TaskUpdate`, `TaskResponse`, `ErrorResponse`).
-- Use the **Try it out** button to execute any CRUD operation directly against your running local server.
 
 ---
 
@@ -159,7 +157,7 @@ curl -i http://localhost:8000/
 ```json
 {
   "name": "Task API",
-  "version": "1.0",
+  "version": "2.0",
   "endpoints": [
     "/tasks"
   ]
@@ -181,7 +179,7 @@ curl -i http://localhost:8000/health
 
 ---
 
-### 3. GET /tasks (List All Tasks)
+### 3. GET /tasks (List All Tasks from SQLite)
 ```bash
 curl -i http://localhost:8000/tasks
 ```
@@ -236,7 +234,7 @@ curl -i http://localhost:8000/tasks/99
 
 ---
 
-### 6. POST /tasks (Create Task)
+### 6. POST /tasks (Create Task in SQLite)
 ```bash
 curl -i -X POST http://localhost:8000/tasks \
   -H "Content-Type: application/json" \
@@ -314,25 +312,76 @@ server: uvicorn
 
 ---
 
+## 🔄 Testing Database Persistence Across Restarts
+
+To verify that SQLite preserves tasks across server restarts:
+
+1. Start server: `uvicorn main:app --reload`
+2. Create a task:
+   ```bash
+   curl -X POST http://localhost:8000/tasks -H "Content-Type: application/json" -d '{"title": "Persistent Task"}'
+   ```
+3. Stop the server (`Ctrl+C`).
+4. Start the server again: `uvicorn main:app --reload`
+5. Fetch tasks:
+   ```bash
+   curl http://localhost:8000/tasks
+   ```
+6. Observe that `"Persistent Task"` is still present in the list and seed data was **not** duplicated.
+
+---
+
+## 🖥️ Viewing the Database with DB Browser for SQLite
+
+1. Download and install [DB Browser for SQLite](https://sqlitebrowser.org/).
+2. Launch the application and click **Open Database**.
+3. Select the `tasks.db` file in the project root directory.
+4. Click the **Browse Data** tab and choose the `tasks` table to inspect the live rows (`id`, `title`, `done`).
+
+---
+
+## 🔍 SQL Queries Explored (Stage 4)
+
+During database testing and verification, the following standard SQL queries were tested:
+
+1. **Select all tasks**:
+   ```sql
+   SELECT * FROM tasks;
+   ```
+   *Result*: Fetches all 3 seeded records with their columns `(id, title, done)`.
+
+2. **Select only completed tasks**:
+   ```sql
+   SELECT * FROM tasks WHERE done = 1;
+   ```
+   *Result*: Returns `(3, 'Test API with Swagger', 1)`.
+
+3. **Count total tasks in database**:
+   ```sql
+   SELECT COUNT(*) FROM tasks;
+   ```
+   *Result*: Returns `3` (used by `init_db()` to prevent duplicate seeds).
+
+4. **Update all tasks to done**:
+   ```sql
+   UPDATE tasks SET done = 1;
+   ```
+   *Result*: Updates all records' completion status to `1`.
+
+5. **Delete completed tasks**:
+   ```sql
+   DELETE FROM tasks WHERE done = 1;
+   ```
+   *Result*: Removes tasks where `done == 1`.
+
+---
+
 ## 🧪 Automated Testing
 
-Run the automated test suite with pytest:
+Run the full pytest suite:
 
-```bash
-pytest
-```
-
-For verbose output with test details:
 ```bash
 pytest -v
 ```
 
----
-
-## 🔄 Resetting Data
-
-Since tasks exist only in memory, you can reset the data at any time by stopping the server (`Ctrl+C`) and restarting it:
-
-```bash
-uvicorn main:app --reload
-```
+All 22 test cases run against isolated temporary SQLite databases to guarantee test purity.
