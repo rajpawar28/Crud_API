@@ -62,17 +62,31 @@ def reset_tasks() -> None:
 class RootResponse(BaseModel):
     """Schema for root endpoint response."""
 
-    name: str = Field(..., example="Task API", description="Name of the API")
-    version: str = Field(..., example="1.0", description="API version")
+    name: str = Field(
+        ...,
+        examples=["Task API"],
+        description="Name of the API",
+    )
+    version: str = Field(
+        ...,
+        examples=["1.0"],
+        description="API version",
+    )
     endpoints: List[str] = Field(
-        ..., example=["/tasks"], description="List of primary resource endpoints"
+        ...,
+        examples=[["/tasks"]],
+        description="List of primary resource endpoints",
     )
 
 
 class HealthResponse(BaseModel):
     """Schema for health check response."""
 
-    status: str = Field(..., example="ok", description="Current health status of the API")
+    status: str = Field(
+        ...,
+        examples=["ok"],
+        description="Current health status of the API",
+    )
 
 
 class TaskCreate(BaseModel):
@@ -143,19 +157,21 @@ class TaskUpdate(BaseModel):
 class TaskResponse(BaseModel):
     """Schema for task response."""
 
-    id: int = Field(..., example=1, description="Unique integer identifier for the task")
-    title: str = Field(..., example="Learn FastAPI", description="Title of the task")
-    done: bool = Field(..., example=False, description="Completion status of the task")
-
-    model_config = {
-        "json_schema_extra": {
-            "example": {
-                "id": 1,
-                "title": "Learn FastAPI",
-                "done": False,
-            }
-        }
-    }
+    id: int = Field(
+        ...,
+        examples=[1],
+        description="Unique integer identifier for the task",
+    )
+    title: str = Field(
+        ...,
+        examples=["Learn FastAPI"],
+        description="Title of the task",
+    )
+    done: bool = Field(
+        ...,
+        examples=[False],
+        description="Completion status of the task",
+    )
 
 
 class ErrorResponse(BaseModel):
@@ -163,17 +179,9 @@ class ErrorResponse(BaseModel):
 
     error: str = Field(
         ...,
-        example="Task 99 not found",
+        examples=["Task 99 not found"],
         description="Descriptive explanation of the error",
     )
-
-    model_config = {
-        "json_schema_extra": {
-            "example": {
-                "error": "Task 99 not found"
-            }
-        }
-    }
 
 
 # --------------------------------------------------
