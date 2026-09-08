@@ -385,3 +385,35 @@ pytest -v
 ```
 
 All 22 test cases run against isolated temporary SQLite databases to guarantee test purity.
+
+---
+
+## 🤖 AI vs Me
+
+In Stage 6 of the assignment, we conducted an AI rematch by comparing a standard naive prompt against our carefully hand-crafted, production-ready implementation located in the root repository. The raw AI generated code is preserved in [`ai-version/main.py`](file:///Users/rajpawar/.gemini/antigravity-ide/scratch/task-api/ai-version/main.py).
+
+### 1. The Full AI Prompt
+```text
+Build a Python FastAPI task CRUD API connecting to SQLite. Store tasks with id, title, done. Seed 3 tasks on startup and implement GET, POST, PUT, DELETE.
+```
+
+### 2. Concrete Differences Identified
+1. **Modular Architecture & Database Separation**: The hand-built version neatly separates database lifecycle and connection management into `database.py` and uses FastAPI `lifespan` context managers, whereas the naive AI version crammed global connections and deprecated `@app.on_event("startup")` handlers into a single file.
+2. **Strict 400 Bad Request vs 422 Error Handling**: The hand-built version implements custom exception handlers for `RequestValidationError` to adhere strictly to the assignment's `400 Bad Request` JSON format (`{"error": "..."}`), whereas the AI version would emit FastAPI's default `422 Unprocessable Entity` for unhandled Pydantic validation failures.
+3. **Database Test Isolation**: The hand-built version uses isolated temporary SQLite databases per test run so test execution never pollutes or wipes the local `tasks.db`, whereas the AI version tests directly modified the production database.
+
+### 3. What AI Did Better
+- The AI rapidly drafted the core raw SQL queries (`INSERT`, `SELECT`, `UPDATE`, `DELETE`) with parameterized placeholders in minimal lines of code.
+
+### 4. What AI Got Wrong or Ignored
+- Used deprecated `@app.on_event("startup")` instead of modern FastAPI `lifespan`.
+- Failed to prevent duplicate seeding when restarted unless the exact conditional check was explicitly reminded.
+- Omitted Swagger UI tag groupings, example payloads, and OpenAPI error response schemas.
+
+### 5. What the Original Prompt Failed to Specify
+- Did not specify strict `400` status code constraints on schema validation.
+- Did not specify test isolation requirements or multi-file architecture guidelines.
+
+### 6. Summary Statement
+*After supplying the comprehensive specification with explicit status codes, validation models, and test isolation requirements, the implementation achieved complete test compliance and enterprise-grade structure.*
+
