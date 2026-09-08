@@ -1,72 +1,60 @@
-"""AI Generated Version - Task API with SQLite.
+"""AI-Generated Reference Implementation - Containerized PostgreSQL Stack.
 
-Created for comparison against the hand-crafted implementation in Assignment A2.
+Created for Stage 6 AI vs Me comparison against the hand-crafted implementation.
 """
 
 import os
-import sqlite3
-from typing import List, Optional
-from fastapi import FastAPI, HTTPException, status
+import psycopg
+from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
-app = FastAPI(title="AI Task API", version="1.0")
+app = FastAPI(title="AI Task API (Postgres)")
 
-DB_FILE = "tasks_ai.db"
+DATABASE_URL = os.getenv("DATABASE_URL", "postgres://postgres:dev@db:5432/tasks")
 
 
 def get_db():
-    conn = sqlite3.connect(DB_FILE)
-    conn.row_factory = sqlite3.Row
-    return conn
+    return psycopg.connect(DATABASE_URL)
 
 
 @app.on_event("startup")
-def startup():
-    conn = get_db()
-    conn.execute(
-        "CREATE TABLE IF NOT EXISTS tasks (id INTEGER PRIMARY KEY, title TEXT, done INTEGER DEFAULT 0);"
-    )
-    conn.commit()
-    count = conn.execute("SELECT COUNT(*) FROM tasks;").fetchone()[0]
-    if count == 0:
-        conn.execute("INSERT INTO tasks (title, done) VALUES ('Task 1', 0);")
-        conn.execute("INSERT INTO tasks (title, done) VALUES ('Task 2', 0);")
-        conn.execute("INSERT INTO tasks (title, done) VALUES ('Task 3', 1);")
-        conn.commit()
-    conn.close()
+def startup_db():
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "CREATE TABLE IF NOT EXISTS tasks (id SERIAL PRIMARY KEY, title TEXT, done BOOLEAN DEFAULT FALSE);"
+            )
+            cur.execute("SELECT COUNT(*) FROM tasks;")
+            if cur.fetchone()[0] == 0:
+                cur.execute("INSERT INTO tasks (title, done) VALUES ('Task 1', false);")
+                cur.execute("INSERT INTO tasks (title, done) VALUES ('Task 2', false);")
+                cur.execute("INSERT INTO tasks (title, done) VALUES ('Task 3', true);")
+            conn.commit()
 
 
-class TaskSchema(BaseModel):
+class TaskIn(BaseModel):
     title: str
-    done: Optional[bool] = False
 
 
 @app.get("/tasks")
-def list_tasks():
-    conn = get_db()
-    rows = conn.execute("SELECT id, title, done FROM tasks;").fetchall()
-    conn.close()
-    return [{"id": r["id"], "title": r["title"], "done": bool(r["done"])} for r in rows]
-
-
-@app.get("/tasks/{task_id}")
-def get_task(task_id: int):
-    conn = get_db()
-    row = conn.execute("SELECT id, title, done FROM tasks WHERE id = ?;", (task_id,)).fetchone()
-    conn.close()
-    if not row:
-        raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
-    return {"id": row["id"], "title": row["title"], "done": bool(row["done"])}
+def get_all():
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT id, title, done FROM tasks;")
+            rows = cur.fetchall()
+            return [{"id": r[0], "title": r[1], "done": r[2]} for r in rows]
 
 
 @app.post("/tasks", status_code=201)
-def create_task(task: TaskSchema):
-    if not task.title or not task.title.strip():
+def add_task(t: TaskIn):
+    if not t.title.strip():
         raise HTTPException(status_code=400, detail="Title cannot be empty")
-    conn = get_db()
-    cur = conn.cursor()
-    cur.execute("INSERT INTO tasks (title, done) VALUES (?, ?);", (task.title.strip(), 0))
-    conn.commit()
-    new_id = cur.lastrowid
-    conn.close()
-    return {"id": new_id, "title": task.title.strip(), "done": False}
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO tasks (title, done) VALUES (%s, %s) RETURNING id, title, done;",
+                (t.title, False),
+            )
+            row = cur.fetchone()
+            conn.commit()
+            return {"id": row[0], "title": row[1], "done": row[2]}
