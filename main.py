@@ -1,15 +1,29 @@
 """Task API - Main Application Module.
 
-A clean, beginner-friendly REST CRUD API built with FastAPI and in-memory storage.
-Follows the FlyRank Week 2 Assignment A1 specification.
+A clean, beginner-friendly REST CRUD API built with FastAPI and SQLite storage.
+Follows the FlyRank Week 3 Assignment A2 specification.
 """
 
+from contextlib import asynccontextmanager
 from typing import Any, Dict, List, Optional
 from fastapi import FastAPI, HTTPException, Request, Response, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, field_validator, model_validator
 from starlette.exceptions import HTTPException as StarletteHTTPException
+
+from database import get_db_connection, init_db
+
+
+# --------------------------------------------------
+# Lifespan Management (Auto Database Initialization)
+# --------------------------------------------------
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Ensure SQLite database and seed data are initialized on startup."""
+    init_db()
+    yield
+
 
 # --------------------------------------------------
 # OpenAPI Documentation & App Setup
@@ -21,7 +35,7 @@ TAGS_METADATA = [
     },
     {
         "name": "Tasks",
-        "description": "CRUD operations for managing tasks stored in memory.",
+        "description": "CRUD operations for managing tasks stored in SQLite.",
     },
 ]
 
@@ -29,31 +43,14 @@ app = FastAPI(
     title="Task API",
     description=(
         "A clean, beginner-friendly REST CRUD API for managing tasks. "
-        "All data is stored in memory and resets upon server restart."
+        "All data is persisted in a local SQLite database (tasks.db)."
     ),
-    version="1.0",
+    version="2.0",
     openapi_tags=TAGS_METADATA,
     docs_url="/docs",
     redoc_url="/redoc",
+    lifespan=lifespan,
 )
-
-# --------------------------------------------------
-# Initial Data & In-Memory Storage
-# --------------------------------------------------
-INITIAL_TASKS: List[Dict[str, Any]] = [
-    {"id": 1, "title": "Learn FastAPI", "done": False},
-    {"id": 2, "title": "Build CRUD API", "done": False},
-    {"id": 3, "title": "Test API with Swagger", "done": True},
-]
-
-# Mutable in-memory store
-tasks_db: List[Dict[str, Any]] = [task.copy() for task in INITIAL_TASKS]
-
-
-def reset_tasks() -> None:
-    """Reset in-memory tasks to the initial 3 example tasks."""
-    global tasks_db
-    tasks_db = [task.copy() for task in INITIAL_TASKS]
 
 
 # --------------------------------------------------
@@ -69,7 +66,7 @@ class RootResponse(BaseModel):
     )
     version: str = Field(
         ...,
-        examples=["1.0"],
+        examples=["2.0"],
         description="API version",
     )
     endpoints: List[str] = Field(
@@ -248,7 +245,7 @@ def get_root():
     """Return API metadata."""
     return {
         "name": "Task API",
-        "version": "1.0",
+        "version": "2.0",
         "endpoints": ["/tasks"],
     }
 
@@ -271,12 +268,22 @@ def get_health():
     response_model=List[TaskResponse],
     status_code=status.HTTP_200_OK,
     summary="List All Tasks",
-    description="Returns the complete list of tasks currently stored in memory.",
+    description="Returns the complete list of tasks currently stored in SQLite.",
     tags=["Tasks"],
 )
 def get_tasks():
-    """Return all in-memory tasks."""
-    return tasks_db
+    """Return all tasks from SQLite."""
+    conn = get_db_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute("SELECT id, title, done FROM tasks;")
+        rows = cursor.fetchall()
+        return [
+            {"id": row["id"], "title": row["title"], "done": bool(row["done"])}
+            for row in rows
+        ]
+    finally:
+        conn.close()
 
 
 @app.get(
@@ -288,96 +295,21 @@ def get_tasks():
         404: {"model": ErrorResponse, "description": "Task not found with the requested ID"},
     },
     summary="Get Task by ID",
-    description="Returns a single task by its integer ID. Returns 404 if not found.",
+    description="Returns a single task by its integer ID from SQLite. Returns 404 if not found.",
     tags=["Tasks"],
 )
 def get_task(id: int):
-    """Return a single task by ID."""
-    for task in tasks_db:
-        if task["id"] == id:
-            return task
-    raise HTTPException(
-        status_code=status.HTTP_404_NOT_FOUND,
-        detail=f"Task {id} not found",
-    )
-
-
-@app.post(
-    "/tasks",
-    response_model=TaskResponse,
-    status_code=status.HTTP_201_CREATED,
-    responses={
-        201: {"model": TaskResponse, "description": "Task created successfully"},
-        400: {"model": ErrorResponse, "description": "Validation error or invalid request body"},
-    },
-    summary="Create New Task",
-    description=(
-        "Creates a new task with the given title. Automatically assigns the next available ID "
-        "and sets done to false. Rejects empty, whitespace-only, or missing titles."
-    ),
-    tags=["Tasks"],
-)
-def create_task(task_in: TaskCreate):
-    """Create a new task in memory."""
-    next_id = max([t["id"] for t in tasks_db], default=0) + 1
-    new_task = {
-        "id": next_id,
-        "title": task_in.title,
-        "done": False,
-    }
-    tasks_db.append(new_task)
-    return new_task
-
-
-@app.put(
-    "/tasks/{id}",
-    response_model=TaskResponse,
-    status_code=status.HTTP_200_OK,
-    responses={
-        200: {"model": TaskResponse, "description": "Task updated successfully"},
-        400: {"model": ErrorResponse, "description": "Validation error or invalid request body"},
-        404: {"model": ErrorResponse, "description": "Task not found with the requested ID"},
-    },
-    summary="Update Task by ID",
-    description=(
-        "Updates an existing task's title and/or done status. "
-        "Returns 404 if the task is not found or 400 if the payload is invalid."
-    ),
-    tags=["Tasks"],
-)
-def update_task(id: int, task_in: TaskUpdate):
-    """Update an existing task in memory."""
-    for task in tasks_db:
-        if task["id"] == id:
-            if task_in.title is not None:
-                task["title"] = task_in.title
-            if task_in.done is not None:
-                task["done"] = task_in.done
-            return task
-    raise HTTPException(
-        status_code=status.HTTP_404_NOT_FOUND,
-        detail=f"Task {id} not found",
-    )
-
-
-@app.delete(
-    "/tasks/{id}",
-    status_code=status.HTTP_204_NO_CONTENT,
-    responses={
-        204: {"description": "Task deleted successfully with empty response body"},
-        404: {"model": ErrorResponse, "description": "Task not found with the requested ID"},
-    },
-    summary="Delete Task by ID",
-    description="Deletes a task by its integer ID. Returns 204 No Content on success or 404 if not found.",
-    tags=["Tasks"],
-)
-def delete_task(id: int):
-    """Delete a task by ID."""
-    for idx, task in enumerate(tasks_db):
-        if task["id"] == id:
-            tasks_db.pop(idx)
-            return Response(status_code=status.HTTP_204_NO_CONTENT)
-    raise HTTPException(
-        status_code=status.HTTP_404_NOT_FOUND,
-        detail=f"Task {id} not found",
-    )
+    """Return a single task by ID from SQLite."""
+    conn = get_db_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute("SELECT id, title, done FROM tasks WHERE id = ?;", (id,))
+        row = cursor.fetchone()
+        if row is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Task {id} not found",
+            )
+        return {"id": row["id"], "title": row["title"], "done": bool(row["done"])}
+    finally:
+        conn.close()
