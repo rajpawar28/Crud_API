@@ -12,7 +12,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, field_validator, model_validator
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from database import get_db_connection, init_db
+import database
 
 
 # --------------------------------------------------
@@ -21,7 +21,7 @@ from database import get_db_connection, init_db
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Ensure SQLite database and seed data are initialized on startup."""
-    init_db()
+    database.init_db()
     yield
 
 
@@ -273,7 +273,7 @@ def get_health():
 )
 def get_tasks():
     """Return all tasks from SQLite."""
-    conn = get_db_connection()
+    conn = database.get_db_connection()
     try:
         cursor = conn.cursor()
         cursor.execute("SELECT id, title, done FROM tasks;")
@@ -300,7 +300,7 @@ def get_tasks():
 )
 def get_task(id: int):
     """Return a single task by ID from SQLite."""
-    conn = get_db_connection()
+    conn = database.get_db_connection()
     try:
         cursor = conn.cursor()
         cursor.execute("SELECT id, title, done FROM tasks WHERE id = ?;", (id,))
@@ -332,7 +332,7 @@ def get_task(id: int):
 )
 def create_task(task_in: TaskCreate):
     """Insert a new task into SQLite and return it."""
-    conn = get_db_connection()
+    conn = database.get_db_connection()
     try:
         cursor = conn.cursor()
         cursor.execute(
@@ -368,7 +368,7 @@ def create_task(task_in: TaskCreate):
 )
 def update_task(id: int, task_in: TaskUpdate):
     """Update an existing task in SQLite."""
-    conn = get_db_connection()
+    conn = database.get_db_connection()
     try:
         cursor = conn.cursor()
         cursor.execute("SELECT id, title, done FROM tasks WHERE id = ?;", (id,))
@@ -409,7 +409,7 @@ def update_task(id: int, task_in: TaskUpdate):
 )
 def delete_task(id: int):
     """Delete a task from SQLite by ID."""
-    conn = get_db_connection()
+    conn = database.get_db_connection()
     try:
         cursor = conn.cursor()
         cursor.execute("DELETE FROM tasks WHERE id = ?;", (id,))

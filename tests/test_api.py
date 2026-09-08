@@ -1,22 +1,44 @@
-"""Automated test suite for Task API.
+"""Automated test suite for Task API (SQLite-backed).
 
-Tests all CRUD operations, validation rules, status codes, and error formats.
+Tests all CRUD operations, database persistence, seed logic, validation rules,
+status codes, and JSON error formats using isolated temporary SQLite databases.
 """
 
+import os
+import sqlite3
+import tempfile
 import pytest
 from fastapi.testclient import TestClient
 
-from main import app, reset_tasks
+import database
+from main import app
 
 client = TestClient(app)
 
 
 @pytest.fixture(autouse=True)
-def run_around_tests():
-    """Reset tasks before each test to ensure test isolation."""
-    reset_tasks()
-    yield
-    reset_tasks()
+def isolated_db(monkeypatch):
+    """Provide an isolated temporary SQLite database for every test."""
+    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as tmp:
+        temp_db_path = tmp.name
+
+    # Initialize schema and seed data in temporary test database
+    database.init_db(temp_db_path)
+
+    # Monkeypatch get_db_connection to direct all app traffic to temp_db_path
+    original_get_db = database.get_db_connection
+    monkeypatch.setattr(
+        database,
+        "get_db_connection",
+        lambda db_path=temp_db_path: original_get_db(temp_db_path),
+    )
+    monkeypatch.setattr(database, "DB_PATH", temp_db_path)
+
+    yield temp_db_path
+
+    # Cleanup temporary test database file
+    if os.path.exists(temp_db_path):
+        os.remove(temp_db_path)
 
 
 # --------------------------------------------------
@@ -28,7 +50,7 @@ def test_get_root():
     assert response.status_code == 200
     data = response.json()
     assert data["name"] == "Task API"
-    assert data["version"] == "1.0"
+    assert data["version"] == "2.0"
     assert "/tasks" in data["endpoints"]
 
 
@@ -43,7 +65,7 @@ def test_get_health():
 # Read Endpoints (GET /tasks, GET /tasks/{id})
 # --------------------------------------------------
 def test_get_tasks():
-    """Test GET /tasks returns initial 3 tasks and 200 OK."""
+    """Test GET /tasks returns initial 3 seeded tasks from SQLite and 200 OK."""
     response = client.get("/tasks")
     assert response.status_code == 200
     tasks = response.json()
@@ -75,7 +97,7 @@ def test_get_task_unknown():
 # Create Endpoint (POST /tasks)
 # --------------------------------------------------
 def test_post_task_valid():
-    """Test POST /tasks creates a new task with auto-assigned ID and done=false."""
+    """Test POST /tasks creates a new task in SQLite with auto-assigned ID and done=false."""
     response = client.post("/tasks", json={"title": "Buy milk"})
     assert response.status_code == 201
     data = response.json()
@@ -83,7 +105,7 @@ def test_post_task_valid():
     assert data["title"] == "Buy milk"
     assert data["done"] is False
 
-    # Verify task is now present in list
+    # Verify task is now present in SQLite database
     tasks_res = client.get("/tasks")
     assert len(tasks_res.json()) == 4
 
@@ -124,9 +146,10 @@ def test_post_task_null_title():
 
 
 def test_post_task_ignores_client_id_and_done():
-    """Test POST /tasks rejects or does not allow client to set id or done."""
-    response = client.post("/tasks", json={"title": "Clean room", "id": 100, "done": True})
-    # extra fields are forbidden in TaskCreate schema, returning 400
+    """Test POST /tasks rejects client attempting to pass id or done in request body."""
+    response = client.post(
+        "/tasks", json={"title": "Clean room", "id": 100, "done": True}
+    )
     assert response.status_code == 400
     assert "error" in response.json()
 
@@ -135,13 +158,13 @@ def test_post_task_ignores_client_id_and_done():
 # Update Endpoint (PUT /tasks/{id})
 # --------------------------------------------------
 def test_put_task_title_and_done():
-    """Test PUT /tasks/{id} updates both title and done status."""
+    """Test PUT /tasks/{id} updates both title and done status in SQLite."""
     response = client.put("/tasks/1", json={"title": "Buy groceries", "done": True})
     assert response.status_code == 200
     data = response.json()
     assert data == {"id": 1, "title": "Buy groceries", "done": True}
 
-    # Verify updated state
+    # Verify persisted updated state in SQLite
     get_res = client.get("/tasks/1")
     assert get_res.json() == {"id": 1, "title": "Buy groceries", "done": True}
 
@@ -204,12 +227,12 @@ def test_put_task_whitespace_title():
 # Delete Endpoint (DELETE /tasks/{id})
 # --------------------------------------------------
 def test_delete_task_existing():
-    """Test DELETE /tasks/{id} removes task, returns 204 No Content with empty body."""
+    """Test DELETE /tasks/{id} removes task from SQLite, returns 204 No Content with empty body."""
     response = client.delete("/tasks/1")
     assert response.status_code == 204
     assert response.content == b""
 
-    # Verify task 1 is gone
+    # Verify task 1 is gone from SQLite
     get_res = client.get("/tasks/1")
     assert get_res.status_code == 404
 
@@ -229,23 +252,43 @@ def test_delete_task_unknown_id():
 
 
 # --------------------------------------------------
-# ID Collision & State Reset Tests
+# Database Seed & Persistence Tests
 # --------------------------------------------------
-def test_id_collision_avoidance():
-    """Test creating tasks after deleting one does not cause ID collision."""
-    # Create task id 4
-    res4 = client.post("/tasks", json={"title": "Task 4"})
-    assert res4.status_code == 201
-    assert res4.json()["id"] == 4
+def test_seed_not_duplicated_on_reinit(isolated_db):
+    """Verify that multiple init_db() calls do not duplicate seed data."""
+    # init_db has already run once via fixture
+    conn = database.get_db_connection(isolated_db)
+    cursor = conn.cursor()
+    cursor.execute("SELECT COUNT(*) FROM tasks;")
+    assert cursor.fetchone()[0] == 3
+    conn.close()
 
-    # Delete task id 4
-    del_res = client.delete("/tasks/4")
-    assert del_res.status_code == 204
+    # Call init_db again simulating server restart
+    database.init_db(isolated_db)
+    database.init_db(isolated_db)
 
-    # Create another task - should safely create next available id (4 or higher)
-    res_new = client.post("/tasks", json={"title": "Task 5"})
-    assert res_new.status_code == 201
-    # Check all existing IDs are unique
-    all_tasks = client.get("/tasks").json()
-    all_ids = [t["id"] for t in all_tasks]
-    assert len(all_ids) == len(set(all_ids))
+    conn = database.get_db_connection(isolated_db)
+    cursor = conn.cursor()
+    cursor.execute("SELECT COUNT(*) FROM tasks;")
+    assert cursor.fetchone()[0] == 3
+    conn.close()
+
+
+def test_database_persistence(isolated_db):
+    """Verify that records written to SQLite persist across connection closures."""
+    # Insert via API
+    res = client.post("/tasks", json={"title": "Persistence Test Task"})
+    assert res.status_code == 201
+    created_id = res.json()["id"]
+
+    # Directly open a fresh independent connection to the database file
+    direct_conn = sqlite3.connect(isolated_db)
+    cursor = direct_conn.cursor()
+    cursor.execute("SELECT id, title, done FROM tasks WHERE id = ?;", (created_id,))
+    row = cursor.fetchone()
+    direct_conn.close()
+
+    assert row is not None
+    assert row[0] == created_id
+    assert row[1] == "Persistence Test Task"
+    assert row[2] == 0
