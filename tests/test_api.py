@@ -1,14 +1,18 @@
-"""Automated test suite for Task API (PostgreSQL/Docker-ready).
+"""Automated test suite for Task API (PostgreSQL/Docker-ready + Auth A4).
 
-Tests all CRUD operations, validation rules, status codes, and error formats.
-Supports isolated testing via monkeypatched repository fixtures.
+Tests all CRUD operations, validation rules, status codes, error formats,
+and Supabase authentication flows.
+Supports isolated testing via monkeypatched repository and auth fixtures.
 """
 
 from typing import Any, Dict, List, Optional
+from unittest.mock import MagicMock, patch
 import pytest
 from fastapi.testclient import TestClient
 
 import database
+import supabase_client
+import auth
 from main import app
 
 client = TestClient(app)
@@ -64,6 +68,45 @@ class MockDatabase:
         return False
 
 
+class MockUser:
+    """Mock Supabase user object."""
+
+    def __init__(self, user_id="test-user-id-123", email="test@example.com", created_at="2024-01-01T00:00:00Z"):
+        self.id = user_id
+        self.email = email
+        self.created_at = created_at
+
+
+class MockSession:
+    """Mock Supabase session object."""
+
+    def __init__(self):
+        self.access_token = "mock-access-token-abc123"
+        self.refresh_token = "mock-refresh-token-xyz789"
+
+
+class MockSignupResponse:
+    """Mock Supabase signup response."""
+
+    def __init__(self, user=None):
+        self.user = user or MockUser()
+
+
+class MockLoginResponse:
+    """Mock Supabase login response."""
+
+    def __init__(self, session=None, user=None):
+        self.session = session or MockSession()
+        self.user = user or MockUser()
+
+
+class MockGetUserResponse:
+    """Mock Supabase get_user response."""
+
+    def __init__(self, user=None):
+        self.user = user or MockUser()
+
+
 @pytest.fixture(autouse=True)
 def isolated_db(monkeypatch):
     """Provide an isolated database state for every test."""
@@ -77,6 +120,21 @@ def isolated_db(monkeypatch):
     yield mock_db
 
 
+@pytest.fixture(autouse=True)
+def mock_supabase(monkeypatch):
+    """Provide a mock Supabase client for all tests."""
+    mock_client = MagicMock()
+    monkeypatch.setattr(supabase_client, "supabase", mock_client)
+    monkeypatch.setattr(auth, "supabase", mock_client)
+    # Also patch the supabase imported in main.py
+    monkeypatch.setattr("main.supabase", mock_client)
+
+    # Default: get_user succeeds (for protected route tests)
+    mock_client.auth.get_user.return_value = MockGetUserResponse()
+
+    yield mock_client
+
+
 # --------------------------------------------------
 # Root and Health Endpoint Tests
 # --------------------------------------------------
@@ -86,7 +144,7 @@ def test_get_root():
     assert response.status_code == 200
     data = response.json()
     assert data["name"] == "Task API"
-    assert data["version"] == "3.0"
+    assert data["version"] == "4.0"
     assert "/tasks" in data["endpoints"]
 
 
@@ -321,3 +379,209 @@ def test_full_crud_lifecycle():
 
     # 6. GET deleted task returns 404
     assert client.get(f"/tasks/{created_id}").status_code == 404
+
+
+# ==================================================
+# A4 Auth Tests
+# ==================================================
+
+# --------------------------------------------------
+# GET /public/info (Test 1)
+# --------------------------------------------------
+def test_get_public_info():
+    """Test GET /public/info returns public message with 200 OK — no auth required."""
+    response = client.get("/public/info")
+    assert response.status_code == 200
+    data = response.json()
+    assert data == {"message": "Welcome stranger! This info is public."}
+
+
+# --------------------------------------------------
+# POST /auth/signup (Tests 2-4)
+# --------------------------------------------------
+def test_signup_valid(mock_supabase):
+    """Test POST /auth/signup with valid email/password returns 201 Created."""
+    mock_supabase.auth.sign_up.return_value = MockSignupResponse()
+
+    response = client.post(
+        "/auth/signup",
+        json={"email": "test@example.com", "password": "password123"},
+    )
+    assert response.status_code == 201
+    data = response.json()
+    assert "id" in data
+    assert data["email"] == "test@example.com"
+    assert "created_at" in data
+
+
+def test_signup_missing_email():
+    """Test POST /auth/signup with missing email returns 400 Bad Request."""
+    response = client.post("/auth/signup", json={"password": "password123"})
+    assert response.status_code == 400
+    data = response.json()
+    assert "error" in data
+
+
+def test_signup_missing_password():
+    """Test POST /auth/signup with missing password returns 400 Bad Request."""
+    response = client.post("/auth/signup", json={"email": "test@example.com"})
+    assert response.status_code == 400
+    data = response.json()
+    assert "error" in data
+
+
+# --------------------------------------------------
+# POST /auth/login (Tests 5-7)
+# --------------------------------------------------
+def test_login_invalid_credentials(mock_supabase):
+    """Test POST /auth/login with invalid credentials returns 401 Unauthorized."""
+    mock_supabase.auth.sign_in_with_password.side_effect = Exception("Invalid login credentials")
+
+    response = client.post(
+        "/auth/login",
+        json={"email": "wrong@example.com", "password": "wrongpass"},
+    )
+    assert response.status_code == 401
+    data = response.json()
+    assert data == {"error": "Invalid login credentials"}
+
+
+def test_login_valid(mock_supabase):
+    """Test POST /auth/login with valid credentials returns 200 OK with tokens."""
+    mock_supabase.auth.sign_in_with_password.return_value = MockLoginResponse()
+
+    response = client.post(
+        "/auth/login",
+        json={"email": "test@example.com", "password": "password123"},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert "access_token" in data
+    assert "refresh_token" in data
+    assert data["access_token"] == "mock-access-token-abc123"
+
+
+def test_login_returns_access_token(mock_supabase):
+    """Test successful login response contains access_token field."""
+    mock_supabase.auth.sign_in_with_password.return_value = MockLoginResponse()
+
+    response = client.post(
+        "/auth/login",
+        json={"email": "test@example.com", "password": "password123"},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert "access_token" in data
+    assert len(data["access_token"]) > 0
+
+
+# --------------------------------------------------
+# GET /protected/profile — Auth required (Tests 8-12)
+# --------------------------------------------------
+def test_profile_without_auth():
+    """Test GET /protected/profile without Authorization header returns 401."""
+    response = client.get("/protected/profile")
+    assert response.status_code == 401
+    data = response.json()
+    assert data == {"error": "Access token required"}
+
+
+def test_profile_with_malformed_auth():
+    """Test GET /protected/profile with malformed Authorization returns 401."""
+    response = client.get(
+        "/protected/profile",
+        headers={"Authorization": "NotBearer some-token"},
+    )
+    assert response.status_code == 401
+    data = response.json()
+    assert "error" in data
+
+
+def test_profile_with_fake_token(mock_supabase):
+    """Test GET /protected/profile with fake token returns 401."""
+    mock_supabase.auth.get_user.side_effect = Exception("Invalid token")
+
+    response = client.get(
+        "/protected/profile",
+        headers={"Authorization": "Bearer fake-token-12345"},
+    )
+    assert response.status_code == 401
+    data = response.json()
+    assert data == {"error": "Invalid or expired token"}
+
+
+def test_profile_with_tampered_token(mock_supabase):
+    """Test GET /protected/profile with tampered token returns 401."""
+    mock_supabase.auth.get_user.side_effect = Exception("Invalid token")
+
+    response = client.get(
+        "/protected/profile",
+        headers={"Authorization": "Bearer tampered.jwt.token"},
+    )
+    assert response.status_code == 401
+    data = response.json()
+    assert data == {"error": "Invalid or expired token"}
+
+
+def test_profile_with_valid_token(mock_supabase):
+    """Test GET /protected/profile with valid token returns 200 OK with user info."""
+    mock_supabase.auth.get_user.return_value = MockGetUserResponse()
+
+    response = client.get(
+        "/protected/profile",
+        headers={"Authorization": "Bearer valid-test-token"},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["id"] == "test-user-id-123"
+    assert data["email"] == "test@example.com"
+    assert "created_at" in data
+
+
+# --------------------------------------------------
+# GET /protected/dashboard — Auth required (Tests 13-14)
+# --------------------------------------------------
+def test_dashboard_without_auth():
+    """Test GET /protected/dashboard without token returns 401."""
+    response = client.get("/protected/dashboard")
+    assert response.status_code == 401
+    data = response.json()
+    assert data == {"error": "Access token required"}
+
+
+def test_dashboard_with_valid_token(mock_supabase):
+    """Test GET /protected/dashboard with valid token returns 200 OK."""
+    mock_supabase.auth.get_user.return_value = MockGetUserResponse()
+
+    response = client.get(
+        "/protected/dashboard",
+        headers={"Authorization": "Bearer valid-test-token"},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["message"] == "Welcome to your dashboard"
+    assert data["user"]["id"] == "test-user-id-123"
+    assert data["user"]["email"] == "test@example.com"
+
+
+# --------------------------------------------------
+# POST /auth/logout — Auth required (Tests 15-16)
+# --------------------------------------------------
+def test_logout_without_auth():
+    """Test POST /auth/logout without token returns 401."""
+    response = client.post("/auth/logout")
+    assert response.status_code == 401
+    data = response.json()
+    assert data == {"error": "Access token required"}
+
+
+def test_logout_with_valid_token(mock_supabase):
+    """Test POST /auth/logout with valid token returns 204 No Content."""
+    mock_supabase.auth.get_user.return_value = MockGetUserResponse()
+
+    response = client.post(
+        "/auth/logout",
+        headers={"Authorization": "Bearer valid-test-token"},
+    )
+    assert response.status_code == 204
+    assert response.content == b""
