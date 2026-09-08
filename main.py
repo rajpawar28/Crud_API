@@ -313,3 +313,38 @@ def get_task(id: int):
         return {"id": row["id"], "title": row["title"], "done": bool(row["done"])}
     finally:
         conn.close()
+
+
+@app.post(
+    "/tasks",
+    response_model=TaskResponse,
+    status_code=status.HTTP_201_CREATED,
+    responses={
+        201: {"model": TaskResponse, "description": "Task created successfully in SQLite"},
+        400: {"model": ErrorResponse, "description": "Validation error or invalid request body"},
+    },
+    summary="Create New Task",
+    description=(
+        "Creates a new task with the given title in SQLite. "
+        "The database automatically assigns the ID and sets done to false."
+    ),
+    tags=["Tasks"],
+)
+def create_task(task_in: TaskCreate):
+    """Insert a new task into SQLite and return it."""
+    conn = get_db_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            "INSERT INTO tasks (title, done) VALUES (?, ?);",
+            (task_in.title, 0),
+        )
+        conn.commit()
+        new_id = cursor.lastrowid
+        return {
+            "id": new_id,
+            "title": task_in.title,
+            "done": False,
+        }
+    finally:
+        conn.close()
