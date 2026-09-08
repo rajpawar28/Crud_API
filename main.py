@@ -297,3 +297,72 @@ def get_task(id: int):
             detail=f"Task {id} not found",
         )
     return task
+
+
+@app.post(
+    "/tasks",
+    response_model=TaskResponse,
+    status_code=status.HTTP_201_CREATED,
+    responses={
+        201: {"model": TaskResponse, "description": "Task created successfully in PostgreSQL"},
+        400: {"model": ErrorResponse, "description": "Validation error or invalid request body"},
+    },
+    summary="Create New Task",
+    description=(
+        "Creates a new task with the given title in PostgreSQL. "
+        "The database automatically assigns the ID and sets done to false."
+    ),
+    tags=["Tasks"],
+)
+def create_task(task_in: TaskCreate):
+    """Insert a new task into PostgreSQL and return it."""
+    return database.insert_task(task_in.title)
+
+
+@app.put(
+    "/tasks/{id}",
+    response_model=TaskResponse,
+    status_code=status.HTTP_200_OK,
+    responses={
+        200: {"model": TaskResponse, "description": "Task updated successfully in PostgreSQL"},
+        400: {"model": ErrorResponse, "description": "Validation error or invalid request body"},
+        404: {"model": ErrorResponse, "description": "Task not found with the requested ID"},
+    },
+    summary="Update Task by ID",
+    description=(
+        "Updates an existing task's title and/or done status in PostgreSQL using parameterized SQL. "
+        "Returns 404 if the task is not found or 400 if the payload is invalid."
+    ),
+    tags=["Tasks"],
+)
+def update_task(id: int, task_in: TaskUpdate):
+    """Update an existing task in PostgreSQL."""
+    updated = database.update_task_record(id, task_in.title, task_in.done)
+    if updated is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Task {id} not found",
+        )
+    return updated
+
+
+@app.delete(
+    "/tasks/{id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    responses={
+        204: {"description": "Task deleted successfully with empty response body"},
+        404: {"model": ErrorResponse, "description": "Task not found with the requested ID"},
+    },
+    summary="Delete Task by ID",
+    description="Deletes a task from PostgreSQL by its integer ID. Returns 204 No Content on success or 404 if not found.",
+    tags=["Tasks"],
+)
+def delete_task(id: int):
+    """Delete a task from PostgreSQL by ID."""
+    deleted = database.delete_task_record(id)
+    if not deleted:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Task {id} not found",
+        )
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
