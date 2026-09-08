@@ -348,3 +348,77 @@ def create_task(task_in: TaskCreate):
         }
     finally:
         conn.close()
+
+
+@app.put(
+    "/tasks/{id}",
+    response_model=TaskResponse,
+    status_code=status.HTTP_200_OK,
+    responses={
+        200: {"model": TaskResponse, "description": "Task updated successfully in SQLite"},
+        400: {"model": ErrorResponse, "description": "Validation error or invalid request body"},
+        404: {"model": ErrorResponse, "description": "Task not found with the requested ID"},
+    },
+    summary="Update Task by ID",
+    description=(
+        "Updates an existing task's title and/or done status in SQLite using parameterized SQL. "
+        "Returns 404 if the task is not found or 400 if the payload is invalid."
+    ),
+    tags=["Tasks"],
+)
+def update_task(id: int, task_in: TaskUpdate):
+    """Update an existing task in SQLite."""
+    conn = get_db_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute("SELECT id, title, done FROM tasks WHERE id = ?;", (id,))
+        existing = cursor.fetchone()
+        if existing is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Task {id} not found",
+            )
+
+        new_title = task_in.title if task_in.title is not None else existing["title"]
+        new_done = int(task_in.done) if task_in.done is not None else existing["done"]
+
+        cursor.execute(
+            "UPDATE tasks SET title = ?, done = ? WHERE id = ?;",
+            (new_title, new_done, id),
+        )
+        conn.commit()
+        return {
+            "id": id,
+            "title": new_title,
+            "done": bool(new_done),
+        }
+    finally:
+        conn.close()
+
+
+@app.delete(
+    "/tasks/{id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    responses={
+        204: {"description": "Task deleted successfully with empty response body"},
+        404: {"model": ErrorResponse, "description": "Task not found with the requested ID"},
+    },
+    summary="Delete Task by ID",
+    description="Deletes a task from SQLite by its integer ID. Returns 204 No Content on success or 404 if not found.",
+    tags=["Tasks"],
+)
+def delete_task(id: int):
+    """Delete a task from SQLite by ID."""
+    conn = get_db_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM tasks WHERE id = ?;", (id,))
+        conn.commit()
+        if cursor.rowcount == 0:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Task {id} not found",
+            )
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
+    finally:
+        conn.close()
