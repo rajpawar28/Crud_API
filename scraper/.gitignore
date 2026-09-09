@@ -1,0 +1,12 @@
+# Ignore cached HTML files (do not commit raw HTML cache)
+cache/
+*.html
+
+# Python bytecode & cache
+__pycache__/
+*.py[cod]
+
+# Test caches
+.pytest_cache/
+.coverage
+htmlcov/
