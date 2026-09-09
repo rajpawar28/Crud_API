@@ -102,7 +102,7 @@ class PoliteFetcher:
             try:
                 html = cache_path.read_text(encoding="utf-8")
                 self.cache_hits_count += 1
-                now_iso = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+                now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
                 print(f"CACHE HIT {url} (bytes={len(html)})")
                 return FetchResult(
                     url=url,
@@ -123,7 +123,7 @@ class PoliteFetcher:
         while attempt < max_attempts:
             attempt += 1
             self._wait_for_rate_limit()
-            now_iso = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+            now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
             try:
                 self.pages_fetched_count += 1
@@ -131,6 +131,7 @@ class PoliteFetcher:
                 status = resp.status_code
 
                 if status == 200:
+                    resp.encoding = resp.apparent_encoding or "utf-8"
                     html = resp.text
                     print(f"FETCH {url} status={status} bytes={len(html)}")
                     if self.enable_cache:
@@ -217,7 +218,7 @@ class PoliteFetcher:
             html=None,
             status_code=None,
             is_cache_hit=False,
-            fetched_at=datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+            fetched_at=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
             error_message="Exceeded max attempts",
             retries=retries_done,
         )
