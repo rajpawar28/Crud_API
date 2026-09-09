@@ -1,6 +1,7 @@
 # Ignore cached HTML files (do not commit raw HTML cache)
 cache/
-*.html
+cache/*.html
+!tests/fixtures/*.html
 
 # Python bytecode & cache
 __pycache__/
